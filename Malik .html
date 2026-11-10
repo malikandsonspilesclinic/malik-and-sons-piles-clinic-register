@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0f766e">
+<title>Patient Register</title>
+<style>
+:root{--bg:#f6f7f8;--card:#fff;--ink:#16202a;--mute:#5f6b76;--line:#dde2e6;--brand:#0f766e;--brand-ink:#fff;--bad:#b42318;--warn:#b54708;--ok:#067647}
+@media (prefers-color-scheme:dark){:root{--bg:#101417;--card:#1a2025;--ink:#e8edf1;--mute:#9aa7b2;--line:#2b343b;--brand:#14a39a;--brand-ink:#06201e;--bad:#f97066;--warn:#fdb022;--ok:#47cd89}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--brand);color:var(--brand-ink);display:flex;align-items:center;gap:8px;padding:10px 14px;flex-wrap:wrap}
+header h1{font-size:18px;margin:0;flex:1;cursor:pointer;min-width:140px}
+header button{background:transparent;color:inherit;border:1px solid currentColor;border-radius:8px;padding:6px 10px;font-size:14px}
+main{max-width:720px;margin:0 auto;padding:14px 14px 90px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1}
+input,select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;margin:4px 0 10px}
+textarea{min-height:76px;resize:vertical}
+label{font-size:13px;color:var(--mute)}
+button{font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:10px 14px;cursor:pointer}
+button.primary{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+button.danger{color:var(--bad)}
+.fab{position:fixed;right:16px;bottom:16px;border-radius:999px;padding:14px 20px;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.pt{cursor:pointer}
+.pt b{font-size:17px}
+.mute{color:var(--mute);font-size:14px}
+.badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.over{color:var(--bad)}.today{color:var(--warn)}.soon{color:var(--ok)}
+h2{font-size:16px;margin:18px 0 8px}
+pre{white-space:pre-wrap;font:inherit;margin:2px 0 8px}
+.banner{background:#fff4e5;color:#7a4a00;border:1px solid #f5c26b;border-radius:10px;padding:10px;margin-bottom:12px;font-size:14px}
+.msg{padding:10px;border-radius:8px;margin-top:10px;font-size:14px;background:var(--bg);border:1px solid var(--line)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:12px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer}
+.tile .th{height:110px;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:34px}
+.tile img{width:100%;height:110px;object-fit:cover;display:block}
+.tile .cap{padding:6px 8px;font-size:12px;color:var(--mute)}
+.viewer{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:20;display:flex;flex-direction:column;color:#fff}
+.viewer .bar{display:flex;gap:8px;align-items:center;padding:10px;flex-wrap:wrap}
+.viewer button,.viewer a.btnlink{background:transparent;color:#fff;border:1px solid #fff;border-radius:8px;padding:8px 12px;font-size:14px;text-decoration:none}
+.viewer button.danger{color:#ff8a80;border-color:#ff8a80}
+.viewer .body{flex:1;overflow:auto;display:flex;padding:8px}
+.viewer .body>*{margin:auto}
+.viewer img{max-width:100%;max-height:100%}
+.viewer img.full{max-width:none;max-height:none}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="home">Patient Register</h1>
+  <button id="bFollow">Follow-ups</button>
+  <button id="bSet">Settings</button>
+</header>
+<main id="app"></main>
+
+<script>
+"use strict";
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+const today = () => new Date().toLocaleDateString('en-CA');
+const ls = {
+  get(k, d = '') { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+const mb = n => n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : (n / 1048576).toFixed(1) + ' MB';
+let urls = [];
+const mkURL = blob => { const u = URL.createObjectURL(blob); urls.push(u); return u; };
+const freeURLs = () => { urls.forEach(u => URL.revokeObjectURL(u)); urls = []; };
+const isImg = f => (f.type || '').startsWith('image/');
+
+/* ==PURE== */
+const DEFAULT_TPL = 'Hello {name},\nYour appointment is booked for {date} at {time}.\n{doctor}\n{clinic}\nPlease reply to confirm, or message us to reschedule. Thank you.';
+const fmtDate = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '';
+const fmtTime = t => { if (!t) return ''; const [h, m] = t.split(':').map(Number); return ((h + 11) % 12 + 1) + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM'); };
+function fillTpl(tpl, v) {
+  const out = [];
+  for (const line of tpl.split('\n')) {
+    const had = /\{\w+\}/.test(line);
+    const s = line.replace(/\{(\w+)\}/g, (m, k) => (k in v ? (v[k] || '') : m)).replace(/ {2,}/g, ' ').trimEnd();
+    if (had && !s.trim()) continue;
+    out.push(s);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+function waNumber(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (s.startsWith('+')) return s.replace(/\D/g, '');
+  let d = s.replace(/\D/g, '');
+  if (d.startsWith('00')) return d.slice(2);
+  if (d.startsWith('0')) d = d.slice(1);
+  if (!d) return '';
+  const cc = (ls.get('cc', '91') || '91').replace(/\D/g, '');
+  return d.length <= 10 ? cc + d : d;
+}
+const liveVisits = p => (p.visits || []).filter(v => !v.deleted).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.updatedAt - a.updatedAt);
+function nextDue(p) {
+  const c = [];
+  const v = liveVisits(p)[0];
+  if (v && v.followUp) c.push({ d: v.followUp, t: '', src: 'visit' });
+  if (p.appt && p.appt.date) c.push({ d: p.appt.date, t: p.appt.time || '', src: 'appt' });
+  if (!c.length) return null;
+  const t0 = today();
+  const up = c.filter(x => x.d >= t0).sort((a, b) => a.d.localeCompare(b.d) || a.t.localeCompare(b.t));
+  return up.length ? up[0] : c.sort((a, b) => b.d.localeCompare(a.d))[0];
+}
+/* ==/PURE== */
+
+/* ---------- storage (IndexedDB, on this device only) ---------- */
+let db;
+const openDB = () => new Promise((res, rej) => {
+  const r = indexedDB.open('patient-register', 2);
+  r.onupgradeneeded = () => {
+    const d = r.result;
+    if (!d.objectStoreNames.contains('patients')) d.createObjectStore('patients', { keyPath: 'id' });
+    if (!d.objectStoreNames.contains('files')) d.createObjectStore('files', { keyPath: 'id' }).createIndex('pid', 'pid');
+  };
+  r.onsuccess = () => res(r.result);
+  r.onerror = () => rej(r.error);
+});
+const store = (name, mode) => db.transaction(name, mode).objectStore(name);
+const reqP = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+const dbAll = () => reqP(store('patients', 'readonly').getAll());
+const dbGet = id => reqP(store('patients', 'readonly').get(id));
+const dbPut = p => reqP(store('patients', 'readwrite').put(p));
+const fAll = () => reqP(store('files', 'readonly').getAll());
+const fGet = id => reqP(store('files', 'readonly').get(id));
+const fPut = f => reqP(store('files', 'readwrite').put(f));
+const filesFor = async pid => (await reqP(store('files', 'readonly').index('pid').getAll(pid))).filter(f => !f.deleted && f.data);
+
+/* ---------- encryption for backups ---------- */
+const b64 = buf => { let s = ''; const a = new Uint8Array(buf); for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return btoa(s); };
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function deriveKey(pass, salt) {
+  const m = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, m, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function encryptJSON(obj, pass) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const k = await deriveKey(pass, salt);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode(JSON.stringify(obj)));
+  return JSON.stringify({ app: 'patient-register', v: 1, salt: b64(salt), iv: b64(iv), data: b64(ct) });
+}
+async function decryptJSON(text, pass) {
+  const f = JSON.parse(text);
+  if (f.app !== 'patient-register') throw new Error('Not a Patient Register backup');
+  const k = await deriveKey(pass, unb64(f.salt));
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(f.iv) }, k, unb64(f.data));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+/* ---------- merge (last edit wins; visits and files merged by id) ---------- */
+async function mergeIn(plist, flist) {
+  let added = 0, updated = 0, files = 0;
+  for (const p of plist) {
+    p.visits = p.visits || [];
+    const l = await dbGet(p.id);
+    if (!l) { await dbPut(p); added++; continue; }
+    const base = (p.updatedAt || 0) > (l.updatedAt || 0) ? p : l;
+    const vm = new Map();
+    for (const v of [...l.visits, ...p.visits]) {
+      const o = vm.get(v.id);
+      if (!o || (v.updatedAt || 0) > (o.updatedAt || 0)) vm.set(v.id, v);
+    }
+    const m = { ...base, visits: [...vm.values()] };
+    if (JSON.stringify(m) !== JSON.stringify(l)) { await dbPut(m); updated++; }
+  }
+  for (const f of flist) {
+    const l = await fGet(f.id);
+    if (!l || (f.updatedAt || 0) > (l.updatedAt || 0)) { await fPut(f); if (!l && !f.deleted) files++; }
+  }
+  return { added, updated, files };
+}
+
+/* ---------- derived data ---------- */
+const touched = p => Math.max(p.updatedAt || 0, ...(p.visits || []).map(v => v.updatedAt || 0));
+function followBadge(due) {
+  if (!due || !due.d) return '';
+  const t = today(), tm = due.t ? ' · ' + fmtTime(due.t) : '';
+  if (due.d < t) return `<span class="badge over">Overdue ${esc(due.d)}</span>`;
+  if (due.d === t) return `<span class="badge today">Due today${esc(tm)}</span>`;
+  return `<span class="badge soon">${due.src === 'appt' ? 'Appt' : 'Follow-up'} ${esc(due.d)}${esc(tm)}</span>`;
+}
+
+/* ---------- state & routing ---------- */
+const S = { view: 'list', id: null, vid: null, q: '' };
+let patients = [];
+const app = $('#app');
+async function load() { patients = (await dbAll()).filter(p => !p.deleted); }
+async function go(view, id = null, vid = null) {
+  freeURLs();
+  document.querySelectorAll('.viewer').forEach(v => v.remove());
+  S.view = view; S.id = id; S.vid = vid;
+  await load(); render(); window.scrollTo(0, 0);
+}
+function render() {
+  ({ list: viewList, detail: viewDetail, pform: viewPatientForm, vform: viewVisitForm, follow: viewFollow, settings: viewSettings, wa: viewWA })[S.view]();
+}
+
+/* ---------- list ---------- */
+function rowsHTML() {
+  const q = S.q.trim().toLowerCase();
+  const rows = patients.filter(p => !q || [p.name, p.pid, p.phone, p.conditions, ...liveVisits(p).map(v => v.diagnosis)].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => touched(b) - touched(a));
+  if (!rows.length) return `<div class="card mute">${patients.length ? 'No matches.' : 'No patients yet. Tap “+ New patient” to add the first one.'}</div>`;
+  return rows.map(p => {
+    const v = liveVisits(p)[0];
+    return `<div class="card pt" data-id="${esc(p.id)}">
+      <div class="row"><b class="grow">${esc(p.name)}</b>${followBadge(nextDue(p))}</div>
+      <div class="mute">${[p.pid && 'ID ' + esc(p.pid), p.age && esc(p.age) + ' y', esc(p.sex), esc(p.phone)].filter(Boolean).join(' · ')}</div>
+      ${v ? `<div class="mute">Last visit ${esc(v.date)}${v.diagnosis ? ' — ' + esc(v.diagnosis) : ''}</div>` : '<div class="mute">No visits yet</div>'}
+    </div>`;
+  }).join('');
+}
+function viewList() {
+  const last = +ls.get('lastBackup', '0');
+  const stale = patients.length && (!last || Date.now() - last > 7 * 864e5);
+  app.innerHTML = `
+    ${stale ? `<div class="banner">No backup in the last 7 days. Open <b>Settings</b> and export a copy to your own storage.</div>` : ''}
+    <input id="q" type="search" placeholder="Search name, ID, phone, diagnosis" value="${esc(S.q)}">
+    <div id="rows">${rowsHTML()}</div>
+    <button class="primary fab" id="add">+ New patient</button>`;
+  $('#q').oninput = e => { S.q = e.target.value; $('#rows').innerHTML = rowsHTML(); bindRows(); };
+  $('#add').onclick = () => go('pform');
+  bindRows();
+}
+function bindRows() { document.querySelectorAll('.pt').forEach(el => el.onclick = () => go('detail', el.dataset.id)); }
+
+/* ---------- documents (prescriptions, reports) ---------- */
+async function prepImage(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const sc = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    if (bmp.close) bmp.close();
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+    if (blob && blob.size < file.size) return { blob, type: 'image/jpeg' };
+  } catch (e) { /* keep the original file */ }
+  return { blob: file, type: file.type || 'application/octet-stream' };
+}
+async function addFiles(p, list, cat, date) {
+  const msg = $('#fmsg'), errs = [];
+  let n = 0, ok = 0;
+  for (const f of list) {
+    n++; msg.textContent = `Saving ${n} of ${list.length}…`;
+    try {
+      if (f.size > 25 * 1024 * 1024) { errs.push((f.name || 'file') + ' is over 25 MB'); continue; }
+      let blob = f, type = f.type;
+      if ((f.type || '').startsWith('image/')) ({ blob, type } = await prepImage(f));
+      await fPut({ id: uid(), pid: p.id, name: f.name || 'scan', type, size: blob.size, category: cat, date, data: await blob.arrayBuffer(), updatedAt: Date.now() });
+      ok++;
+    } catch (e) { errs.push((f.name || 'file') + ': ' + e.message); }
+  }
+  if ($('#fmsg')) $('#fmsg').textContent = (ok ? `Saved ${ok} file${ok > 1 ? 's' : ''}. ` : '') + (errs.length ? 'Not saved: ' + errs.join('; ') : '');
+  loadDocs(p);
+}
+async function loadDocs(p) {
+  const box = $('#docs');
+  if (!box) return;
+  const fs = (await filesFor(p.id)).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.updatedAt - a.updatedAt);
+  if (S.view !== 'detail' || S.id !== p.id || !$('#docs')) return;
+  $('#dcount').textContent = fs.length;
+  box.innerHTML = fs.length
+    ? `<div class="grid">${fs.map(f => `<div class="tile" data-f="${esc(f.id)}"><div class="th">${isImg(f) ? `<img loading="lazy" alt="" src="${mkURL(new Blob([f.data], { type: f.type }))}">` : '📄'}</div><div class="cap"><b>${esc(f.category)}</b><br>${esc(f.date)}</div></div>`).join('')}</div>`
+    : '<div class="card mute">No documents yet.</div>';
+  box.querySelectorAll('[data-f]').forEach(el => el.onclick = () => openViewer(fs.find(x => x.id === el.dataset.f), p));
+}
+function openViewer(f, p) {
+  const url = mkURL(new Blob([f.data], { type: f.type }));
+  const img = isImg(f);
+  const ext = f.type === 'image/jpeg' ? 'jpg' : f.type === 'application/pdf' ? 'pdf' : ((f.name || '').split('.').pop() || 'bin');
+  const v = document.createElement('div');
+  v.className = 'viewer';
+  v.innerHTML = `<div class="bar"><b style="flex:1">${esc(f.category)} · ${esc(f.date)}</b>
+      <a class="btnlink" href="${url}" download="${esc(f.category + '-' + f.date + '.' + ext)}">Download</a>
+      ${img ? '' : `<a class="btnlink" href="${url}" target="_blank" rel="noopener">Open</a>`}
+      <button class="danger" id="vdel">Delete</button><button id="vx">Close</button></div>
+    <div class="body">${img ? `<img alt="" src="${url}">` : `<div style="text-align:center">File<br><span style="opacity:.7">${esc(f.name)}</span></div>`}</div>`;
+  document.body.appendChild(v);
+  const im = v.querySelector('img');
+  if (im) im.onclick = () => im.classList.toggle('full');
+  v.querySelector('#vx').onclick = () => v.remove();
+  v.querySelector('#vdel').onclick = async () => {
+    if (!confirm('Delete this document?')) return;
+    await fPut({ ...f, deleted: true, data: null, updatedAt: Date.now() });
+    v.remove(); loadDocs(p);
+  };
+}
+
+/* ---------- patient detail ---------- */
+function viewDetail() {
+  const p = patients.find(x => x.id === S.id);
+  if (!p) return go('list');
+  const vs = liveVisits(p);
+  const f = (l, v) => v ? `<div><label>${l}</label><pre>${esc(v)}</pre></div>` : '';
+  app.innerHTML = `
+    <button id="back">← All patients</button>
+    <div class="card" style="margin-top:12px">
+      <div class="row"><h2 class="grow" style="margin:0">${esc(p.name)}</h2>${followBadge(nextDue(p))}</div>
+      <div class="mute">${[p.pid && 'ID ' + esc(p.pid), p.age && esc(p.age) + ' y', esc(p.sex), esc(p.phone)].filter(Boolean).join(' · ')}</div>
+      ${f('Chronic conditions', p.conditions)}${f('Allergies', p.allergies)}${f('Notes', p.notes)}
+      <div class="row" style="margin-top:10px"><button id="edit">Edit</button><button id="wa">WhatsApp</button><button class="danger" id="del">Delete</button></div>
+    </div>
+    <h2>Documents (<span id="dcount">0</span>)</h2>
+    <div class="card">
+      <div class="row">
+        <div class="grow"><label>Type</label><select id="fcat"><option>Prescription</option><option>Report</option><option>Other</option></select></div>
+        <div class="grow"><label>Date</label><input id="fdate" type="date" value="${today()}"></div>
+      </div>
+      <div class="row"><button class="primary" id="fcam">Take photo</button><button id="fpick">Choose files</button></div>
+      <input id="fi1" type="file" accept="image/*" capture="environment" hidden>
+      <input id="fi2" type="file" accept="image/*,application/pdf" multiple hidden>
+      <div class="mute" id="fmsg" style="margin-top:8px">Photos are compressed and kept on this device only.</div>
+    </div>
+    <div id="docs"></div>
+    <div class="row"><h2 class="grow">Visits (${vs.length})</h2><button class="primary" id="addv">+ Add visit</button></div>
+    ${vs.map(v => `<div class="card">
+      <div class="row"><b class="grow">${esc(v.date)}</b>${v.by ? `<span class="mute">${esc(v.by)}</span>` : ''}</div>
+      ${f('Complaint', v.complaint)}${f('Findings', v.findings)}${f('Diagnosis', v.diagnosis)}${f('Prescription', v.prescription)}
+      ${v.followUp ? `<div>${followBadge({ d: v.followUp, t: '', src: 'visit' })}</div>` : ''}
+      <div class="row" style="margin-top:8px"><button data-ev="${esc(v.id)}">Edit</button></div>
+    </div>`).join('') || '<div class="card mute">No visits recorded.</div>'}`;
+  $('#back').onclick = () => go('list');
+  $('#edit').onclick = () => go('pform', p.id);
+  $('#wa').onclick = () => go('wa', p.id);
+  $('#addv').onclick = () => go('vform', p.id);
+  document.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => go('vform', p.id, b.dataset.ev));
+  $('#fcam').onclick = () => $('#fi1').click();
+  $('#fpick').onclick = () => $('#fi2').click();
+  for (const sel of ['#fi1', '#fi2']) $(sel).onchange = async e => {
+    const list = [...e.target.files]; e.target.value = '';
+    if (list.length) await addFiles(p, list, $('#fcat').value, $('#fdate').value || today());
+  };
+  loadDocs(p);
+  $('#del').onclick = async () => {
+    if (!confirm('Delete this patient, all visits and documents? (Deletion will also carry over when you import into another device.)')) return;
+    for (const d of await filesFor(p.id)) await fPut({ ...d, deleted: true, data: null, updatedAt: Date.now() });
+    p.deleted = true; p.updatedAt = Date.now(); await dbPut(p); go('list');
+  };
+}
+
+/* ---------- patient form ---------- */
+function viewPatientForm() {
+  const p = patients.find(x => x.id === S.id) || {};
+  const sexOpt = ['', 'Male', 'Female', 'Other'].map(s => `<option ${p.sex === s ? 'selected' : ''}>${s}</option>`).join('');
+  app.innerHTML = `<form id="f" class="card">
+    <h2 style="margin-top:0">${p.id ? 'Edit patient' : 'New patient'}</h2>
+    <label>Name or initials *</label><input name="name" required value="${esc(p.name)}">
+    <label>Patient ID / reference</label><input name="pid" value="${esc(p.pid)}">
+    <div class="row"><div class="grow"><label>Age</label><input name="age" type="number" min="0" max="120" value="${esc(p.age)}"></div>
+    <div class="grow"><label>Sex</label><select name="sex">${sexOpt}</select></div></div>
+    <label>Phone (WhatsApp number)</label><input name="phone" type="tel" value="${esc(p.phone)}">
+    <label>Chronic conditions</label><textarea name="conditions">${esc(p.conditions)}</textarea>
+    <label>Allergies</label><textarea name="allergies">${esc(p.allergies)}</textarea>
+    <label>Notes</label><textarea name="notes">${esc(p.notes)}</textarea>
+    <div class="row"><button class="primary" type="submit">Save</button><button type="button" id="fwa">Save &amp; WhatsApp</button><button type="button" id="cancel">Cancel</button></div>
+  </form>`;
+  $('#cancel').onclick = () => go(p.id ? 'detail' : 'list', p.id);
+  const save = async wa => {
+    const form = $('#f');
+    if (!form.reportValidity()) return;
+    const d = Object.fromEntries(new FormData(form));
+    const rec = { ...p, ...d, id: p.id || uid(), visits: p.visits || [], updatedAt: Date.now(), createdAt: p.createdAt || Date.now() };
+    await dbPut(rec); await go(wa ? 'wa' : 'detail', rec.id);
+  };
+  $('#f').onsubmit = e => { e.preventDefault(); save(false); };
+  $('#fwa').onclick = () => save(true);
+}
+
+/* ---------- visit form ---------- */
+function viewVisitForm() {
+  const p = patients.find(x => x.id === S.id);
+  if (!p) return go('list');
+  const v = (p.visits || []).find(x => x.id === S.vid) || {};
+  app.innerHTML = `<form id="f" class="card">
+    <h2 style="margin-top:0">${v.id ? 'Edit visit' : 'New visit'} — ${esc(p.name)}</h2>
+    <label>Date</label><input name="date" type="date" required value="${esc(v.date || today())}">
+    <label>Seen by</label><input name="by" value="${esc(v.by ?? ls.get('doctor'))}">
+    <label>Complaint</label><textarea name="complaint">${esc(v.complaint)}</textarea>
+    <label>Findings / vitals</label><textarea name="findings">${esc(v.findings)}</textarea>
+    <label>Diagnosis</label><input name="diagnosis" value="${esc(v.diagnosis)}">
+    <label>Prescription / plan</label><textarea name="prescription">${esc(v.prescription)}</textarea>
+    <label>Next follow-up</label><input name="followUp" type="date" value="${esc(v.followUp)}">
+    <div class="row"><button class="primary" type="submit">Save</button><button type="button" id="cancel">Cancel</button>
+    ${v.id ? '<button type="button" class="danger" id="delv">Delete visit</button>' : ''}</div>
+  </form>`;
+  $('#cancel').onclick = () => go('detail', p.id);
+  const saveVisit = async rec => {
+    p.visits = (p.visits || []).filter(x => x.id !== rec.id).concat(rec);
+    if (!rec.deleted && p.appt && rec.date >= p.appt.date) { delete p.appt; p.updatedAt = Date.now(); }
+    await dbPut(p); go('detail', p.id);
+  };
+  $('#f').onsubmit = e => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(e.target));
+    saveVisit({ ...v, ...d, id: v.id || uid(), updatedAt: Date.now() });
+  };
+  if (v.id) $('#delv').onclick = () => { if (confirm('Delete this visit?')) saveVisit({ ...v, deleted: true, updatedAt: Date.now() }); };
+}
+
+/* ---------- follow-ups ---------- */
+function viewFollow() {
+  const rows = patients.map(p => ({ p, due: nextDue(p) })).filter(x => x.due)
+    .sort((a, b) => a.due.d.localeCompare(b.due.d) || (a.due.t || '').localeCompare(b.due.t || ''));
+  app.innerHTML = `<h2 style="margin-top:0">Follow-ups &amp; appointments</h2>` + (rows.map(({ p, due }) => `
+    <div class="card pt" data-id="${esc(p.id)}"><div class="row"><b class="grow">${esc(p.name)}</b>${followBadge(due)}</div>
+    <div class="row"><span class="mute grow">${esc(p.phone)}</span><button data-wa="${esc(p.id)}">WhatsApp</button></div></div>`).join('') || '<div class="card mute">Nothing scheduled.</div>');
+  bindRows();
+  document.querySelectorAll('[data-wa]').forEach(b => b.onclick = e => { e.stopPropagation(); go('wa', b.dataset.wa); });
+}
+
+/* ---------- WhatsApp appointment message ---------- */
+function viewWA() {
+  const p = patients.find(x => x.id === S.id);
+  if (!p) return go('list');
+  const due = nextDue(p), upcoming = due && due.d >= today();
+  const tmr = new Date(Date.now() + 864e5).toLocaleDateString('en-CA');
+  const date0 = upcoming ? due.d : tmr;
+  const time0 = (upcoming && due.t) ? due.t : (ls.get('apptTime', '') || '10:00');
+  let dirty = false;
+  app.innerHTML = `
+    <button id="wback">← Back</button>
+    <div class="card" style="margin-top:12px">
+      <h2 style="margin-top:0">WhatsApp appointment</h2>
+      <label>Patient</label><div><b>${esc(p.name)}</b></div>
+      <label style="display:block;margin-top:10px">WhatsApp number</label>
+      <input id="wph" type="tel" value="${esc(p.phone)}" placeholder="98765 43210">
+      <div class="mute" id="wnum"></div>
+      <div class="row" style="margin-top:10px">
+        <div class="grow"><label>Date</label><input id="wd" type="date" value="${esc(date0)}"></div>
+        <div class="grow"><label>Time</label><input id="wt" type="time" value="${esc(time0)}"></div>
+      </div>
+      <label>Message</label><textarea id="wmsg" style="min-height:150px"></textarea>
+      <label><input type="checkbox" id="wrec" checked style="width:auto;margin:0 8px 0 0"> Record as the next appointment</label>
+      <div class="row" style="margin-top:12px"><button class="primary" id="wsend">Open WhatsApp</button><button id="wreset">Reset message</button></div>
+      <div id="wout"></div>
+    </div>`;
+  const build = () => fillTpl(ls.get('tpl', '') || DEFAULT_TPL, { name: p.name, doctor: ls.get('doctor'), clinic: ls.get('clinic'), date: fmtDate($('#wd').value), time: fmtTime($('#wt').value) });
+  const refresh = () => { if (!dirty) $('#wmsg').value = build(); };
+  const hint = () => { const n = waNumber($('#wph').value); $('#wnum').textContent = n ? 'Will open a chat with +' + n : 'No number: WhatsApp will let you pick a contact.'; };
+  $('#wd').oninput = refresh; $('#wt').oninput = refresh;
+  $('#wph').oninput = hint;
+  $('#wmsg').oninput = () => { dirty = true; };
+  $('#wreset').onclick = () => { dirty = false; refresh(); };
+  $('#wback').onclick = () => go('detail', p.id);
+  $('#wsend').onclick = async () => {
+    const phone = $('#wph').value.trim(), msg = $('#wmsg').value.trim();
+    if (!msg) return;
+    const url = 'https://wa.me/' + waNumber(phone) + '?text=' + encodeURIComponent(msg);
+    const w = window.open(url, '_blank');
+    if (w) { try { w.opener = null; } catch (e) {} }
+    let changed = false;
+    if (phone !== (p.phone || '')) { p.phone = phone; changed = true; }
+    const rec = $('#wrec').checked && $('#wd').value;
+    if (rec) { p.appt = { date: $('#wd').value, time: $('#wt').value }; changed = true; }
+    ls.set('apptTime', $('#wt').value);
+    if (changed) { p.updatedAt = Date.now(); await dbPut(p); }
+    if (!w) { location.href = url; return; }
+    $('#wout').innerHTML = `<div class="msg">WhatsApp opened with the message ready. Tap send there.${rec ? ' Appointment saved.' : ''}</div>`;
+  };
+  refresh(); hint();
+}
+
+/* ---------- settings / backup / share ---------- */
+function viewSettings() {
+  const last = +ls.get('lastBackup', '0');
+  app.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0">Settings</h2>
+      <label>Your name</label><input id="doc" placeholder="Dr. ..." value="${esc(ls.get('doctor'))}">
+      <label>Clinic name</label><input id="clinic" value="${esc(ls.get('clinic'))}">
+      <label>Default country code (for numbers entered without +)</label><input id="cc" inputmode="numeric" value="${esc(ls.get('cc', '91') || '91')}">
+      <label>WhatsApp appointment message</label>
+      <textarea id="tpl" style="min-height:140px">${esc(ls.get('tpl', '') || DEFAULT_TPL)}</textarea>
+      <div class="mute">Placeholders: {name} {date} {time} {doctor} {clinic}. A line is dropped if its placeholder is empty. Keep medical details out of this message.</div>
+      <button id="tplreset" style="margin-top:8px">Reset message</button>
+      <div class="mute" id="store" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Export (backup or share)</h2>
+      <p class="mute">Creates one encrypted file. Save it in your own storage (Drive, pen drive, laptop) or send it to a co-doctor. Share the passphrase separately, not in the same message.<br>Last backup: ${last ? new Date(last).toLocaleString() : 'never'}</p>
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="incf" checked style="width:auto;margin:0"> Include scanned documents (bigger file)</label>
+      <label style="display:block;margin-top:8px">Passphrase (8+ characters)</label><input id="p1" type="password" autocomplete="new-password">
+      <label>Repeat passphrase</label><input id="p2" type="password" autocomplete="new-password">
+      <button class="primary" id="exp">Export encrypted file</button>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Import (restore or merge)</h2>
+      <p class="mute">Merges a file into this device. New patients and documents are added; for the same patient, visit or document, the most recent edit wins. Nothing is overwritten blindly.</p>
+      <input id="file" type="file" accept=".prbak,application/json,.json">
+      <label>Passphrase</label><input id="p3" type="password" autocomplete="off">
+      <button id="imp">Import and merge</button>
+    </div>
+    <div id="out"></div>`;
+  const out = t => $('#out').innerHTML = `<div class="msg">${esc(t)}</div>`;
+  if (!(window.crypto && crypto.subtle)) out('Encryption is not available in this browser or context. Open the app over https or from a local file in a current browser.');
+  if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(e => {
+    const el = $('#store');
+    if (el && e.usage != null) el.textContent = 'Storage used on this device: ' + mb(e.usage) + (e.quota ? ' of ' + mb(e.quota) + ' available' : '');
+  }).catch(() => {});
+  $('#doc').onchange = e => ls.set('doctor', e.target.value.trim());
+  $('#clinic').onchange = e => ls.set('clinic', e.target.value.trim());
+  $('#cc').onchange = e => ls.set('cc', e.target.value.replace(/\D/g, '') || '91');
+  $('#tpl').onchange = e => ls.set('tpl', e.target.value.trim() === DEFAULT_TPL ? '' : e.target.value);
+  $('#tplreset').onclick = () => { ls.set('tpl', ''); $('#tpl').value = DEFAULT_TPL; };
+  $('#exp').onclick = async () => {
+    const a = $('#p1').value, b = $('#p2').value;
+    if (a.length < 8) return out('Passphrase must be at least 8 characters.');
+    if (a !== b) return out('Passphrases do not match.');
+    try {
+      out('Preparing export…');
+      const all = await dbAll();
+      let files = [];
+      if ($('#incf').checked) files = (await fAll()).map(f => ({ ...f, data: f.data ? b64(f.data) : null }));
+      const text = await encryptJSON({ exportedAt: Date.now(), by: ls.get('doctor'), patients: all, files }, a);
+      const blob = new Blob([text], { type: 'application/json' });
+      const el = document.createElement('a');
+      el.href = URL.createObjectURL(blob); el.download = `patients-${today()}.prbak`;
+      document.body.appendChild(el); el.click(); el.remove();
+      ls.set('lastBackup', String(Date.now()));
+      out(`Exported ${all.filter(p => !p.deleted).length} patients and ${files.filter(f => !f.deleted).length} documents (${mb(blob.size)}). Keep the file and passphrase safe: without the passphrase it cannot be opened.`);
+    } catch (e) { out('Export failed: ' + e.message); }
+  };
+  $('#imp').onclick = async () => {
+    const f = $('#file').files[0];
+    if (!f) return out('Choose a backup file first.');
+    try {
+      const data = await decryptJSON(await f.text(), $('#p3').value);
+      const files = (data.files || []).map(x => ({ ...x, data: x.data ? unb64(x.data).buffer : null }));
+      const r = await mergeIn(data.patients || [], files);
+      await load();
+      out(`Done. ${r.added} patients added, ${r.updated} updated, ${r.files} documents added.`);
+    } catch (e) { out('Could not import: wrong passphrase or not a valid backup file.'); }
+  };
+}
+
+/* ---------- boot ---------- */
+$('#home').onclick = () => go('list');
+$('#bFollow').onclick = () => go('follow');
+$('#bSet').onclick = () => go('settings');
+(async () => {
+  try {
+    db = await openDB();
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+    await go('list');
+    if (/^https?:$/.test(location.protocol) && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  } catch (e) {
+    app.innerHTML = '<div class="card">Could not open local storage in this browser (private mode or blocked). Try a normal browser window.</div>';
+  }
+})();
+</script>
+</body>
+</html>
